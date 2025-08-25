@@ -1,0 +1,879 @@
+;; The first three lines of this file were inserted by DrRacket. They record metadata
+;; about the language level of this file in a form that our tools can easily process.
+#reader(lib "htdp-intermediate-lambda-reader.ss" "lang")((modname |Text Editor|) (read-case-sensitive #t) (teachpacks ()) (htdp-settings #(#t constructor repeating-decimal #f #t none #f () #f)))
+(require 2htdp/image)
+(require 2htdp/universe)
+
+(define BACKGROUND (empty-scene 1000 500 "white")) ; the background for the text buffer
+(define FSIZE-TEXT 20)                             ; the text font size
+(define COLOR-TEXT "black")                        ; the text font color
+(define MENU-STRING (list " MENU"
+                          " ESC : Enable/Disable MENU"
+                          " F1 : Decrease Font Size"
+                          " F2 : Increase Font Size"
+                          " F3 : Enable/Disable SEARCH"
+                          " HOME : Send cursor home"
+                          " END : Send cursor end"))
+(define MENU-BACKGROUND
+  (overlay
+   (overlay/align "middle" "middle"
+                  (foldr (lambda (s a)
+                           (above (text/font s 10 COLOR-TEXT
+                                             "Monospace" "default" "normal" "normal" #f) a))
+                         empty-image MENU-STRING)
+                  (rectangle 200 100 "solid" "grey"))
+   (rectangle 205 105 "solid" "black")))
+
+; A LINE-SEP is a 1-String
+; Represents the creation of a new line in a Text
+(define LINE-SEP "\n")
+
+; A Line is a String
+; Represents a line within the Buffer
+(define l-0 "")
+(define l-1 "hello")
+(define l-2 "Good-bye")
+(define l-3 "123")
+
+; A Text is a String
+; Represents the entire text contained in buffer
+(define t
+  (string-append
+   "About a hiring visit by Edsger Dijkstra (1930-2002)," LINE-SEP
+   "a famous computer scientist:"                         LINE-SEP
+   LINE-SEP))
+(define t-0
+  (string-append
+   l-0 LINE-SEP
+   LINE-SEP))
+(define t-1
+  (string-append
+   l-1 LINE-SEP
+   l-2 LINE-SEP
+   LINE-SEP))
+(define t-2
+  (string-append
+   l-0 LINE-SEP
+   l-1 LINE-SEP
+   l-2 LINE-SEP
+   LINE-SEP))
+(define t-3
+  (string-append
+   l-1 LINE-SEP
+   l-2 LINE-SEP
+   l-3 LINE-SEP
+   LINE-SEP))
+
+(define t-alphabet
+  (string-append
+   "abcdefg"   LINE-SEP
+   "hijklmnop" LINE-SEP
+   "qrstuv"    LINE-SEP
+   "wxyz"      LINE-SEP
+   LINE-SEP))
+
+(define-struct buffer [text line-number column font-size mode])
+; A Buffer is a (make-buffer [NEList-of Line] PosInt PosInt PosInt String)
+; text represents the Text in the editor
+; line-number represents the y position of the cursor relative to the text
+; column represents the x position of the cursor relative to the text
+; font-size represents the size of the text
+; mode represents the Mode of the editor
+
+; Mode is one of:
+; - "EDIT"
+; - "MENU"
+; - "SEARCH"
+(define b-0 (make-buffer (list l-0) 1 0 FSIZE-TEXT "MENU"))
+(define b-1 (make-buffer (list l-1 l-2) 2 0 FSIZE-TEXT "EDIT"))
+(define b-2 (make-buffer (list l-0 l-1 l-2) 3 8 FSIZE-TEXT "MENU"))
+(define b-3 (make-buffer (list l-1 l-2 l-3) 2 7 FSIZE-TEXT "EDIT"))
+
+(define (b-temp n)
+  (... (cond [(list? n) ... (buffer-text n) ...]
+             ;;; Unsure if list template needs to be called,
+             ;;; hasn't been defined in code prior
+             [(number? n) ... (buffer-line-number n) ...
+                          ... (buffer-column n) ...
+                          ... (buffer-font-size n) ...]
+             [(string? n) ... (buffer-mode n) ...])))
+
+; start-of-buffer? : Buffer -> Boolean
+; are we at the top-left corner of the buffer?
+(check-expect (start-of-buffer? b-0) #t)
+(check-expect (start-of-buffer? b-1) #f)
+(check-expect (start-of-buffer? b-2) #f)
+(define (start-of-buffer? buffer)
+  (and (= 1 (buffer-line-number buffer)) (= 0 (buffer-column buffer))))
+
+; end-of-buffer? : Buffer -> Boolean
+; are we at the lower right corner of the buffer, i.e. last line, last column?
+(check-expect (end-of-buffer? b-0) #t)
+(check-expect (end-of-buffer? b-1) #f)
+(check-expect (end-of-buffer? b-2) #t)
+(define (end-of-buffer? buffer)
+  (and (= (length (buffer-text buffer)) (buffer-line-number buffer))
+       (= (string-length ((lambda (n) (first (reverse n))) (buffer-text buffer)))
+          (buffer-column buffer))))
+
+; end-of-line : Buffer NatNumber -> NatNumber
+; the end-of-line position of the given line in the buffer
+(check-expect (end-of-line b-0 0) 0)
+(check-expect (end-of-line b-2 2) 8)
+(check-expect (end-of-line b-3 2) 3)
+(define (end-of-line buffer lnum)
+  (string-length (list-ref (buffer-text buffer) lnum)))
+
+; text->lol : Text -> [NEList-of Line]
+; takes a Text and converts it into a [NEList-of Line]
+(check-expect (text->lol t-0) (list "" ""))
+(check-expect (text->lol t-1) (list "hello" "Good-bye" ""))
+(check-expect (text->lol t-2) (list "" "hello" "Good-bye" ""))
+(check-expect (text->lol t-3) (list "hello" "Good-bye" "123" ""))
+(define (text->lol text)
+  (foldr (lambda (1s a) (if (string=? 1s "\n")
+                            (cons "" a)
+                            (cons (string-append 1s (first a)) (rest a)))) '() (explode text)))
+
+; lol->text : [NEList-of Line] -> Text
+; takes a [NEList-of Line] and converts it into a Text
+(check-expect (lol->text (list "" "")) t-0)
+(check-expect (lol->text (list "hello" "Good-bye" "")) t-1)
+(check-expect (lol->text (list "" "hello" "Good-bye" "")) t-2)
+(check-expect (lol->text (list "hello" "Good-bye" "123" "")) t-3)
+(define (lol->text lol)
+  (foldr (lambda (l a) (string-append l "\n" a)) "" lol))
+
+; editor : Text -> Text  
+; Allows user to edit lines in a text editor
+(define (editor initial-text)
+  (lol->text (buffer-text (big-bang
+                              (make-buffer (text->lol initial-text)
+                                           (length (text->lol initial-text))
+                                           (string-length (first (reverse (text->lol initial-text))))
+                                           FSIZE-TEXT
+                                           "EDIT")
+                            [to-draw scene]
+                            [on-key board]
+                            [name "A Simple Text Editor"]))))
+
+; scene : WorldState -> Image
+; Places lines and cursor location in an image
+(check-expect
+ (scene b-0)
+ (overlay/align "right" "bottom"
+                MENU-BACKGROUND
+                (overlay/align "left" "top"
+                               (foldr (lambda (l a) (above/align "left" l a))
+                                      empty-image
+                                      (list
+                                       (beside
+                                        (text/font "" FSIZE-TEXT COLOR-TEXT
+                                                   "Monospace" "default" "normal" "normal" #f)
+                                        (text/font " " FSIZE-TEXT COLOR-TEXT
+                                                   "Monospace" "default" "normal" "normal" #t))))
+                               BACKGROUND)))
+(check-expect
+ (scene b-1)
+ (overlay/align "left" "top"
+                (foldr (lambda (l a) (above/align "left" l a))
+                       empty-image
+                       (list
+                        (above/align "left"
+                                     (text/font "hello" FSIZE-TEXT COLOR-TEXT
+                                                "Monospace" "default" "normal" "normal" #f)
+                                     (beside
+                                      (text/font "G" FSIZE-TEXT COLOR-TEXT
+                                                 "Monospace" "default" "normal" "normal" #t)
+                                      (text/font "ood-bye" FSIZE-TEXT COLOR-TEXT
+                                                 "Monospace" "default" "normal" "normal" #f)))))
+                BACKGROUND))
+(check-expect
+ (scene b-2)
+ (overlay/align "right" "bottom"
+                MENU-BACKGROUND
+                (overlay/align "left" "top"
+                               (foldr (lambda (l a) (above/align "left" l a))
+                                      empty-image
+                                      (list
+                                       (above/align "left"
+                                                    (text/font "" FSIZE-TEXT COLOR-TEXT
+                                                               "Monospace" "default"
+                                                               "normal" "normal" #f)
+                                                    (text/font "hello" FSIZE-TEXT COLOR-TEXT
+                                                               "Monospace" "default"
+                                                               "normal" "normal" #f)
+                                                    (beside
+                                                     (text/font "Good-bye" FSIZE-TEXT COLOR-TEXT
+                                                                "Monospace" "default"
+                                                                "normal" "normal" #f)
+                                                     (text/font " " FSIZE-TEXT COLOR-TEXT
+                                                                "Monospace" "default"
+                                                                "normal" "normal" #t)))))
+                               BACKGROUND)))
+(check-expect
+ (scene b-3)
+ (overlay/align "left" "top"
+                (foldr (lambda (l a) (above/align "left" l a))
+                       empty-image
+                       (list
+                        (above/align "left"
+                                     (text/font "hello" FSIZE-TEXT COLOR-TEXT
+                                                "Monospace" "default" "normal" "normal" #f)
+                                     (beside
+                                      (text/font "Good-by" FSIZE-TEXT COLOR-TEXT
+                                                 "Monospace" "default" "normal" "normal" #f)
+                                      (text/font "e" FSIZE-TEXT COLOR-TEXT
+                                                 "Monospace" "default" "normal" "normal" #t))
+                                     (text/font "123" FSIZE-TEXT COLOR-TEXT
+                                                "Monospace" "default" "normal" "normal" #f))))
+                BACKGROUND))
+
+(define (scene ws)
+  (local
+    [; draw-text-/w-out-cursor : String -> Image
+     ; draws the text without underlined
+     (define (draw-text-/w-out-cursor line)
+       (text/font line (buffer-font-size ws) COLOR-TEXT
+                  "Monospace" "default" "normal" "normal" #f))
+     ; draw-text-/w-cursor : String -> Image
+     ; draws a character with underline to act as cursor
+     (define (draw-text-/w-cursor line col)
+       (if (>= col (string-length line))
+           (beside
+            (draw-text-/w-out-cursor line)
+            (text/font " " (buffer-font-size ws) COLOR-TEXT
+                       "Monospace" "default" "normal" "normal" #t))
+           (beside
+            (draw-text-/w-out-cursor (substring line 0 col))
+            (text/font (substring line col (+ 1 col)) (buffer-font-size ws) COLOR-TEXT
+                       "Monospace" "default" "normal" "normal" #t)
+            (draw-text-/w-out-cursor (substring line (+ 1 col))))))
+     ; draw-line : String Number -> Image
+     ; intializes cursor
+     (define (draw-line line line-number)
+       (if (= line-number (buffer-line-number ws))
+           (draw-text-/w-cursor line (buffer-column ws))
+           (draw-text-/w-out-cursor line)))
+     ; textblob : [List-of Image] -> Image
+     ; creates the scene for the 'Simple Text Editor'
+     (define (textblob loi)
+       (foldr (lambda (l a) (above/align "left" l a)) empty-image loi))
+     ; menu-scene : Buffer -> Image
+     ; Creates the scene for the menu function
+     (define (menu-scene ws)
+       (overlay/align "right" "bottom"
+                      MENU-BACKGROUND
+                      (edit-scene ws)))
+
+     ; edit-scene : Buffer -> Image
+     ; Creates the scene for the edit function
+     (define (edit-scene ws)
+       (overlay/align "left" "top"
+                      (textblob (map draw-line (buffer-text ws)
+                                     (build-list (length (buffer-text ws)) add1))) BACKGROUND))
+
+     ; search-scene : Buffer -> Image
+     ; Creates the scene for the search function
+     (define (search-scene ws)
+       (overlay/align "left" "top"
+                      (above/align "left"
+                                   (overlay/align "left" "top"
+                                                  (search-scene-1 ws)
+                                                  (search-scene-2 ws))
+                                   (textblob (map draw-line (rest (buffer-text ws))
+                                                  (build-list (length (rest (buffer-text ws)))
+                                                              add1)))) BACKGROUND))]
+    (cond
+      [(menu? ws) (menu-scene ws)]
+      [(search? ws) (search-scene ws)]
+      [(edit? ws) (edit-scene ws)])))
+
+; search-scene-1 : Buffer -> Image
+; Draws the text for the search menu
+(check-expect (search-scene-1 b-1)
+              (above/align "left" 
+                           (text/font "SEARCH:" 20 "white"
+                                      "Monospace" "default" "normal" "normal" #t)
+                           (text/font
+                            "hello" 20 "white"
+                            "Monospace" "default" "normal" "normal" #f)))
+(check-expect (search-scene-1 b-2)
+              (above/align "left" 
+                           (text/font "SEARCH:" 20 "white"
+                                      "Monospace" "default" "normal" "normal" #t)
+                           (text/font
+                            "" 20 "white"
+                            "Monospace" "default" "normal" "normal" #f)))
+(define (search-scene-1 ws)
+  (above/align "left" 
+               (text/font "SEARCH:" (buffer-font-size ws) "white"
+                          "Monospace" "default" "normal" "normal" #t)
+               (text/font
+                (first (buffer-text ws)) (buffer-font-size ws) "white"
+                "Monospace" "default" "normal" "normal" #f)))
+
+; search-scene-2 : Buffer -> Image
+; Draws the background for the search menu
+(check-expect (search-scene-2 b-1) (rectangle 1000 44 "solid" "black"))
+(check-expect (search-scene-2 (make-buffer (list "ab\ncd\nef" "gh" "ijkl") 1 0 20 "SEARCH"))
+              (rectangle 1000 88 "solid" "black"))
+(define (search-scene-2 ws)
+  (rectangle 1000
+             (image-height (search-scene-1 ws))
+             "solid"
+             "black"))
+
+; board : WorldState KeyEvent-> WorldState
+; The key processing funcion for the editor
+(check-expect (board b-3 "right") (make-buffer (list "hello" "Good-bye" "123") 2 8 FSIZE-TEXT "EDIT"))
+(check-expect (board b-2 "left") (make-buffer (list "" "hello" "Good-bye") 3 8 20 "MENU"))
+(check-expect (board b-0 "up") (make-buffer (list "") 1 0 FSIZE-TEXT "MENU"))
+(check-expect (board b-1 "\b") (make-buffer (list "helloGood-bye") 1 5 FSIZE-TEXT "EDIT"))
+(check-expect (board b-2 "\r") (make-buffer (list "" "hello" "Good-bye") 3 8 20 "MENU"))
+(check-expect (board b-3 "home") (make-buffer (list "hello" "Good-bye" "123") 2 0 FSIZE-TEXT "EDIT"))
+(define (board ws ke)
+  (cond
+    [(key=? ke "right")       (right-func ws)]
+    [(key=? ke "left")        (left-func ws)]
+    [(key=? ke "up")          (up-func ws)]
+    [(key=? ke "down")        (down-func ws)]
+    [(key=? ke "\b")          (backspace-func ws)]
+    [(key=? ke "\r")          (return-func ws)]
+    [(key=? ke "home")        (home-func ws)]
+    [(key=? ke "end")         (end-func ws)]
+    [(key=? ke "f1")          (decrease-func ws)]
+    [(key=? ke "f2")          (increase-func ws)]
+    [(key=? ke "escape")      (menu-func ws)]
+    [(key=? ke "f3")          (search-func ws)]
+    [(= 1 (string-length ke)) (type-func ws ke)]
+    [(ignorable-keys? ke)      ws]))
+
+; edit? -> Buffer -> Boolean
+; Predicate to see if menu is active, determines if editing is available
+(check-expect (edit? b-0) #f)
+(check-expect (edit? b-1) #t)
+(define (edit? b)
+  (string=? "EDIT" (buffer-mode b)))
+
+; menu? -> Buffer -> Boolean
+; Predicate to see if menu is active, determines if editing is available
+(check-expect (menu? b-0) #t)
+(check-expect (menu? b-1) #f)
+(define (menu? b)
+  (string=? "MENU" (buffer-mode b)))
+
+; search? -> Buffer -> Boolean
+; Predicate to see if search is active, determines if editing is available
+(check-expect (search? b-0) #f)
+(check-expect (search? b-1) #f)
+(define (search? b)
+  (string=? "SEARCH" (buffer-mode b)))
+
+
+; right-func : Buffer -> Buffer
+; Moves cursor to the right
+(check-expect (right-func b-1) (make-buffer (list "hello" "Good-bye") 2 1 20 "EDIT"))
+(check-expect (right-func b-3) (make-buffer (list "hello" "Good-bye" "123") 2 8 20 "EDIT"))
+(define (right-func ws)
+  (cond
+    [(menu? ws) ws]
+    [(search? ws) ws]
+    [(edit? ws) (if (end-of-buffer? ws)
+                    ws
+                    (if (= (buffer-column ws)
+                           (string-length
+                            (list-ref (buffer-text ws)
+                                      (sub1 (buffer-line-number ws)))))
+                        (make-buffer
+                         (buffer-text ws)
+                         (add1 (buffer-line-number ws))
+                         0
+                         (buffer-font-size ws)
+                         (buffer-mode ws))
+                        (make-buffer
+                         (buffer-text ws)
+                         (buffer-line-number ws)
+                         (add1 (buffer-column ws))
+                         (buffer-font-size ws)
+                         (buffer-mode ws))))]))
+
+; left-func : Buffer -> Buffer
+; Moves cursor to the left
+(check-expect (left-func b-2) (make-buffer (list "" "hello" "Good-bye") 3 8 20 "MENU"))
+(check-expect (left-func b-3) (make-buffer (list "hello" "Good-bye" "123") 2 6 20 "EDIT"))
+(define (left-func ws)
+  (cond
+    [(menu? ws) ws]
+    [(search? ws) ws]
+    [(edit? ws) (if (start-of-buffer? ws)
+                    ws
+                    (if (= (buffer-column ws) 0)
+                        (make-buffer
+                         (buffer-text ws)
+                         (sub1 (buffer-line-number ws))
+                         (string-length
+                          (list-ref (buffer-text ws)
+                                    (sub1 (sub1 (buffer-line-number ws)))))
+                         (buffer-font-size ws)
+                         (buffer-mode ws))
+                        (make-buffer
+                         (buffer-text ws)
+                         (buffer-line-number ws)
+                         (sub1 (buffer-column ws)) 
+                         (buffer-font-size ws)
+                         (buffer-mode ws))))]))
+
+; up-func : Buffer -> Buffer
+; Moves cursor up one line
+(check-expect (up-func b-2) (make-buffer (list "" "hello" "Good-bye") 3 8 20 "MENU"))
+(check-expect (up-func b-3) (make-buffer (list "hello" "Good-bye" "123") 1 5 20 "EDIT"))
+(define (up-func ws)
+  (cond
+    [(menu? ws) ws]
+    [(search? ws) ws]
+    [(edit? ws) (if (= (buffer-line-number ws) 1)
+                    (board ws "home")
+                    (if (> (buffer-column ws)
+                           (string-length
+                            (list-ref (buffer-text ws)
+                                      (sub1 (sub1 (buffer-line-number ws))))))
+                        (make-buffer
+                         (buffer-text ws)
+                         (sub1 (buffer-line-number ws))
+                         (string-length
+                          (list-ref (buffer-text ws)
+                                    (sub1 (sub1 (buffer-line-number ws)))))
+                         (buffer-font-size ws)
+                         (buffer-mode ws))
+                        (make-buffer
+                         (buffer-text ws)
+                         (sub1 (buffer-line-number ws))
+                         (buffer-column ws)
+                         (buffer-font-size ws)
+                         (buffer-mode ws))))]))
+
+; down-func : Buffer -> Buffer
+; Moves cursor down one line
+(check-expect (down-func b-2) (make-buffer (list "" "hello" "Good-bye") 3 8 20 "MENU"))
+(check-expect (down-func b-3) (make-buffer (list "hello" "Good-bye" "123") 3 3 20 "EDIT"))
+(define (down-func ws)
+  (cond
+    [(menu? ws) ws]
+    [(search? ws) ws]
+    [(edit? ws) (if (= (buffer-line-number ws) (length (buffer-text ws)))
+                    (board ws "end")
+                    (if (> (buffer-column ws)
+                           (string-length (list-ref (buffer-text ws)
+                                                    (buffer-line-number ws))))
+                        (make-buffer
+                         (buffer-text ws)
+                         (add1 (buffer-line-number ws))
+                         (string-length
+                          (list-ref (buffer-text ws)
+                                    (buffer-line-number ws)))
+                         (buffer-font-size ws)
+                         (buffer-mode ws))
+                        (make-buffer
+                         (buffer-text ws)
+                         (add1 (buffer-line-number ws))
+                         (buffer-column ws)
+                         (buffer-font-size ws)
+                         (buffer-mode ws))))]))
+
+; backspace-func : Buffer -> Buffer
+; Deletes one character of a line or if at beginning of line, goes to previous line
+(check-expect (backspace-func b-0) (make-buffer (list "") 1 0 20 "MENU"))
+(check-expect (backspace-func b-1) (make-buffer (list "helloGood-bye") 1 5 20 "EDIT"))
+(define (backspace-func ws)
+  (cond
+    [(menu? ws) ws]
+    [(search? ws) (make-buffer
+                   (append (if (= 0 (string-length (first (buffer-text ws))))
+                               (list (first (buffer-text ws)))
+                               (list (substring (first (buffer-text ws))
+                                                0
+                                                (sub1 (string-length (first (buffer-text ws)))))))
+                           (rest (buffer-text ws)))
+                   (buffer-line-number ws)
+                   (buffer-column ws)
+                   (buffer-font-size ws)
+                   (buffer-mode ws))]
+    [(edit? ws) (if (start-of-buffer? ws)
+                    ws
+                    (if (= (buffer-column ws) 0)
+                        (make-buffer
+                         (change-line-\\b ws)
+                         (sub1 (buffer-line-number ws))
+                         (string-length
+                          (list-ref (buffer-text ws)
+                                    (sub1 (sub1 (buffer-line-number ws)))))
+                         (buffer-font-size ws)
+                         (buffer-mode ws))
+                        (make-buffer
+                         (change-line-\b ws)
+                         (buffer-line-number ws)
+                         (sub1 (buffer-column ws))
+                         (buffer-font-size ws)
+                         (buffer-mode ws))))]))
+
+; return-func : Buffer -> Buffer
+; Creates a new line
+(check-expect (return-func b-1) (make-buffer (list "hello" "" "Good-bye") 3 0 20 "EDIT"))
+(check-expect (return-func b-3) (make-buffer (list "hello" "Good-by" "e" "123") 3 0 20 "EDIT"))
+(define (return-func ws)
+  (cond
+    [(menu? ws) ws]
+    [(search? ws) (make-buffer
+                   (append (list (string-append (first (buffer-text ws)) "\n"))
+                           (rest (buffer-text ws)))
+                   (buffer-line-number ws)
+                   (buffer-column ws)
+                   (buffer-font-size ws)
+                   (buffer-mode ws))]
+    [(edit? ws) (if (= 25 (buffer-line-number ws))
+                    ws
+                    (make-buffer
+                     (change-line-\r ws)
+                     (add1 (buffer-line-number ws))
+                     0
+                     (buffer-font-size ws)
+                     (buffer-mode ws)))]))
+
+; home-func : Buffer -> Buffer
+; Sends cursor to beginning of the line, and then to the beginning of the text
+(check-expect (home-func b-1) (make-buffer (list "hello" "Good-bye") 1 0 20 "EDIT"))
+(check-expect (home-func b-3) (make-buffer (list "hello" "Good-bye" "123") 2 0 20 "EDIT"))
+(check-expect (home-func (home-func b-3)) (make-buffer (list "hello" "Good-bye" "123") 1 0 20 "EDIT"))
+(define (home-func ws)
+  (cond
+    [(menu? ws) ws]
+    [(search? ws) ws]
+    [(edit? ws) (if (start-of-buffer? ws)
+                    ws
+                    (if (= (buffer-column ws) 0)
+                        (make-buffer
+                         (buffer-text ws)
+                         1
+                         0
+                         (buffer-font-size ws)
+                         (buffer-mode ws))
+                        (make-buffer
+                         (buffer-text ws)
+                         (buffer-line-number ws)
+                         0
+                         (buffer-font-size ws)
+                         (buffer-mode ws))))]))
+
+; end-func : Buffer -> Buffer
+; Sends cursor to end of the line, and then to the end of the text
+(check-expect (end-func b-1) (make-buffer (list "hello" "Good-bye") 2 8 20 "EDIT"))
+(check-expect (end-func b-3) (make-buffer (list "hello" "Good-bye" "123") 2 8 20 "EDIT"))
+(check-expect (end-func (end-func b-3)) (make-buffer (list "hello" "Good-bye" "123") 3 3 20 "EDIT"))
+(define (end-func ws)
+  (cond
+    [(menu? ws) ws]
+    [(search? ws) ws]
+    [(edit? ws) (if (end-of-buffer? ws)
+                    ws
+                    (if (= (buffer-column ws)
+                           (string-length
+                            (list-ref (buffer-text ws)
+                                      (sub1 (buffer-line-number ws)))))
+                        (make-buffer
+                         (buffer-text ws)
+                         (length (buffer-text ws))
+                         (string-length (list-ref (buffer-text ws)
+                                                  (sub1 (length (buffer-text ws)))))
+                         (buffer-font-size ws)
+                         (buffer-mode ws))
+                        (make-buffer
+                         (buffer-text ws)
+                         (buffer-line-number ws)
+                         (string-length (list-ref (buffer-text ws)
+                                                  (sub1 (buffer-line-number ws))))
+                         (buffer-font-size ws)
+                         (buffer-mode ws))))]))
+
+; decrease-func : Buffer -> Buffer
+; Decreases font size
+(check-expect (decrease-func b-1) (make-buffer (list "hello" "Good-bye") 2 0 19 "EDIT"))
+(check-expect (decrease-func b-2) (make-buffer (list "" "hello" "Good-bye") 3 8 20 "MENU"))
+(define (decrease-func ws)
+  (cond
+    [(menu? ws) ws]
+    [(search? ws) ws]
+    [(edit? ws) (if (= 0 (sub1 (buffer-font-size ws)))
+                    ws
+                    (make-buffer
+                     (buffer-text ws)
+                     (buffer-line-number ws)
+                     (buffer-column ws)
+                     (sub1 (buffer-font-size ws))
+                     (buffer-mode ws)))]))
+
+; increase-func : Buffer -> Buffer
+; Increases font size
+(check-expect (increase-func b-1) (make-buffer (list "hello" "Good-bye") 2 0 21 "EDIT"))
+(check-expect (increase-func b-2) (make-buffer (list "" "hello" "Good-bye") 3 8 20 "MENU"))
+(define (increase-func ws)
+  (cond
+    [(menu? ws) ws]
+    [(search? ws) ws]
+    [(edit? ws) (make-buffer
+                 (buffer-text ws)
+                 (buffer-line-number ws)
+                 (buffer-column ws)
+                 (add1 (buffer-font-size ws))
+                 (buffer-mode ws))]))
+
+; ignorable-keys? : KeyEvent -> Boolean
+; Returns if a key is ignorable (ignorable keys will have no function)
+(check-expect (ignorable-keys? "f10") #t)
+(check-expect (ignorable-keys? "h") #f)
+(define (ignorable-keys? ke)
+  (or (key=? ke "\u007F")
+      (key=? ke "f4")
+      (key=? ke "f5")                         
+      (key=? ke "f6")
+      (key=? ke "f7")
+      (key=? ke "f8")
+      (key=? ke "f9")
+      (key=? ke "f10")
+      (key=? ke "f11")
+      (key=? ke "f12")
+      (key=? ke "wheel-up")
+      (key=? ke "wheel-down")
+      (key=? ke "wheel-left")
+      (key=? ke "wheel-right")
+      (key=? ke "shift")))
+
+; menu-func : Buffer -> Buffer
+; Opens and closes the menu
+(check-expect (menu-func b-0) (make-buffer (list "") 1 0 20 "EDIT"))
+(check-expect (menu-func b-1) (make-buffer (list "hello" "Good-bye") 2 0 20 "MENU"))
+(define (menu-func ws)
+  (cond
+    [(menu? ws) (make-buffer
+                 (buffer-text ws)
+                 (buffer-line-number ws)
+                 (buffer-column ws)
+                 (buffer-font-size ws)
+                 "EDIT")]
+    [(search? ws) (make-buffer
+                   (rest (buffer-text ws))
+                   (buffer-line-number ws)
+                   (buffer-column ws)
+                   (buffer-font-size ws)
+                   "MENU")]
+    [(edit? ws) (make-buffer
+                 (buffer-text ws)
+                 (buffer-line-number ws)
+                 (buffer-column ws)
+                 (buffer-font-size ws)
+                 "MENU")]))
+
+; search-func : Buffer -> Buffer
+; Opens and closes the search
+(define (search-func ws)
+  (local
+    [; posn-ln-c : Buffer -> Posn
+     ; Returns position that describes the coordinates of line number and column
+     (define (posn-ln-c ws)
+       (pos->lnum-cnum
+        (string-search-b (first (buffer-text ws)) (lol->text (rest (buffer-text ws)))
+                         (lnum-cnum->pos (rest (buffer-text ws))
+                                         (buffer-line-number ws)
+                                         (buffer-column ws)))
+        (lol->text (rest (buffer-text ws)))))]
+    (cond
+      [(menu? ws) ws]
+      [(search? ws) (make-buffer
+                     (if (= (length (buffer-text ws)) 1) (buffer-text ws) (rest (buffer-text ws)))
+                     (posn-y (posn-ln-c ws))
+                     (posn-x (posn-ln-c ws))
+                     (buffer-font-size ws)
+                     "EDIT")]
+      [(edit? ws) (make-buffer
+                   (append (list "") (buffer-text ws))
+                   (buffer-line-number ws)
+                   (buffer-column ws)
+                   (buffer-font-size ws) 
+                   "SEARCH")])))
+
+; type-func : Buffer KeyEvent -> Buffer
+; Types key into text
+(check-expect (type-func b-2 "j") (make-buffer (list "" "hello" "Good-bye") 3 8 20 "MENU"))
+(check-expect (type-func b-3 "j") (make-buffer (list "hello" "Good-byje" "123") 2 8 20 "EDIT"))
+(define (type-func ws ke)
+  (cond
+    [(menu? ws) ws]
+    [(search? ws) (make-buffer
+                   (append (list (string-append (first (buffer-text ws)) ke))
+                           (rest (buffer-text ws)))
+                   (buffer-line-number ws)
+                   (buffer-column ws)
+                   (buffer-font-size ws)
+                   (buffer-mode ws))]
+    [(edit? ws) (make-buffer
+                 (change-line ws ke)
+                 (buffer-line-number ws)
+                 (add1 (buffer-column ws))
+                 (buffer-font-size ws)
+                 (buffer-mode ws))]))
+
+; before-list-ref : [List-of X] Number -> [List-of X]
+; returns list of all values before inputted value
+(check-expect (before-list-ref (list "1" "2" "3" "4" "5" "6" "7" "8" "9") 5) (list "1" "2" "3" "4"))
+(check-expect (before-list-ref (list 1 2 3 4 5 6 7 8 9) 7) (list 1 2 3 4 5 6))
+(define (before-list-ref lox n)
+  (cond
+    [(= n 1) '()]
+    [else (cons (first lox) (before-list-ref (rest lox) (sub1 n)))]))
+
+; after-list-ref : [List-of X] Number -> [List-of X]
+; returns list of all values after inputted value
+(check-expect (after-list-ref (list "1" "2" "3" "4" "5" "6" "7" "8" "9") 5) (list "6" "7" "8" "9"))
+(check-expect (after-list-ref (list 1 2 3 4 5 6 7 8 9) 7) (list 8 9))
+(define (after-list-ref lox n)
+  (cond
+    [(= n 1) (rest lox)]
+    [else (after-list-ref (rest lox) (sub1 n))]))
+
+; before-before-list-ref : [List-of X] Number -> [List-of X]
+; returns list of all values two before inputted value
+(check-expect (before-before-list-ref (list "a" "b" "c" "d" "e" "f" "g" "h" "i") 4) (list "a" "b"))
+(check-expect (before-before-list-ref (list 1 2 3 4 5 6 7 8 9) 8) (list 1 2 3 4 5 6))
+(define (before-before-list-ref lox n)
+  (cond
+    [(= n 2) '()]
+    [else (cons (first lox) (before-before-list-ref (rest lox) (sub1 n)))]))
+
+; change-line : Buffer KeyEvent -> [List-of String]
+; edits the line in the [List-of Line]
+(check-expect (change-line b-0 ".") (list "."))
+(check-expect (change-line b-2 "h") (list "" "hello" "Good-byeh"))
+(define (change-line ws ke)
+  (append
+   (before-list-ref (buffer-text ws) (buffer-line-number ws))
+   (list (string-append
+          (substring
+           (list-ref (buffer-text ws) (sub1 (buffer-line-number ws)))
+           0
+           (buffer-column ws))
+          ke
+          (substring
+           (list-ref (buffer-text ws) (sub1 (buffer-line-number ws)))
+           (buffer-column ws)
+           (string-length (list-ref (buffer-text ws) (sub1 (buffer-line-number ws)))))))
+   (after-list-ref (buffer-text ws) (buffer-line-number ws))))
+
+; change-line-\b : Buffer -> [List-of String]
+; backspaces in the text editor
+(check-expect (change-line-\b b-2) (list "" "hello" "Good-by"))
+(check-expect (change-line-\b b-3) (list "hello" "Good-be" "123"))
+(define (change-line-\b ws)
+  (append
+   (before-list-ref (buffer-text ws) (buffer-line-number ws))
+   (list (string-append
+          (substring
+           (list-ref (buffer-text ws) (sub1 (buffer-line-number ws)))
+           0
+           (sub1 (buffer-column ws)))
+          (substring
+           (list-ref (buffer-text ws) (sub1 (buffer-line-number ws)))
+           (buffer-column ws)
+           (string-length (list-ref (buffer-text ws) (sub1 (buffer-line-number ws)))))))
+   (after-list-ref (buffer-text ws) (buffer-line-number ws))))
+
+; change-line-\\b : Buffer -> [List-of String]
+; backspaces when at the beginning of the line to go to previous line
+(check-expect (change-line-\\b b-1) (list "helloGood-bye"))
+(check-expect (change-line-\\b b-2) (list "" "helloGood-bye"))
+(define (change-line-\\b ws)
+  (append
+   (before-before-list-ref (buffer-text ws) (buffer-line-number ws))
+   (list (string-append
+          (list-ref (buffer-text ws) (sub1 (sub1 (buffer-line-number ws))))
+          (list-ref (buffer-text ws) (sub1 (buffer-line-number ws)))))
+   (after-list-ref (buffer-text ws) (buffer-line-number ws))))
+
+; change-line-\r : Buffer -> [List-of String]
+; returns in the text editor
+(check-expect (change-line-\r b-2) (list "" "hello" "Good-bye" ""))
+(check-expect (change-line-\r b-3) (list "hello" "Good-by" "e" "123"))
+(define (change-line-\r ws)
+  (append
+   (before-list-ref (buffer-text ws) (buffer-line-number ws))
+   (list (substring
+          (list-ref (buffer-text ws) (sub1 (buffer-line-number ws))) 0 (buffer-column ws))
+         (substring
+          (list-ref (buffer-text ws) (sub1 (buffer-line-number ws))) (buffer-column ws)
+          (string-length (list-ref (buffer-text ws) (sub1 (buffer-line-number ws))))))
+   (after-list-ref (buffer-text ws) (buffer-line-number ws))))
+
+; pos->lnum-cnum : Number String -> Posn
+; Returns the position of the cursor in terms of [List-of Line]
+(define (pos->lnum-cnum n t)
+  (local
+    [; p->lc : Posn Number String -> Posn
+     ; Returns the position of the cursor relative to the [List-of Line]
+     ; based on the position of line number and column
+     (define (p->lc ln-c curs str)
+       (cond
+         [(= 0 curs)
+          ln-c]
+         [(and (string=? "\n" (string-ith str 0)) (= 1 (string-length str)))
+          ln-c]
+         [(string=? "\n" (string-ith str 0))
+          (p->lc (make-posn 0 (add1 (posn-y ln-c)))
+                 (sub1 curs) (substring str 1 (string-length str)))]
+         [else
+          (p->lc (make-posn (add1 (posn-x ln-c)) (posn-y ln-c))
+                 (sub1 curs) (substring str 1 (string-length str)))]))]
+    (p->lc (make-posn 0 1) n t)))
+
+; lnum-cnum->pos : [List-of Line] Number Number -> Number
+; Returns the position of the cursor in terms of Text
+(define (lnum-cnum->pos lol ln c)
+  (local
+    [; lc->p : [List-of Line] Number Number Number -> Number
+     ; Returns the position of the cursor relative to the Text
+     ; based on the position of line number and column
+     (define (lc->p q r s t)
+       (cond
+         [(and (= r 1) (= s 0)) t]
+         [(and (= r 2) (= s 0)) (lc->p (rest q) (sub1 r) c (add1 t))]
+         [(= s 0) (lc->p (rest q) (sub1 r) (string-length (first q)) (add1 t))]
+         [else (lc->p q r (sub1 s) (add1 t))]))]
+    (lc->p (rest lol) ln (if (= ln 1) c (string-length (first lol))) 0)))
+
+; string-search-b : String String Number -> Number
+; returns the position of the first occurance of s in t
+(check-expect (string-search-b "pattern" "pattern string test"  0)  0) ; an easy search
+(check-expect (string-search-b "pattern" "pattern string test"  1)  1) ; not found at pos. >= 1
+(check-expect (string-search-b "pattern" "pattern string test" 30) 20) ; bad start position: 30
+(check-expect (string-search-b "string"  "pattern string test"  0)  8) ; found at pos. 8
+(check-expect (string-search-b "string"  "pattern string test"  8)  8) ; same answer as previous!
+(check-expect (string-search-b "string"  "pattern string test"  9)  9) ; not found at pos. >= 9
+(check-expect (string-search-b ""        "pattern string test"  0)  0) ; "" always matches
+(check-expect (string-search-b "paddern" "pattern string test"  0)  0) ; note "...dd...": not found
+(define (string-search-b s t n)
+  (local
+    [; string-search/a : String String Number -> Number
+     ; Returns the position of r during the first occurance of p in t 
+     (define (string-search/a p q r)
+       (cond
+         [(string=? p s) r]
+         [(= 0 (string-length q)) n]
+         [else (string-search/a
+                (string-append (substring p 1 (string-length p)) (string-ith q 0))
+                (substring q 1)
+                (add1 r))]))]
+    (if (or (> (string-length s) (string-length t))
+            (>= n (string-length t))
+            (= (add1 n) (string-length t)))
+        (add1 (string-length t))
+        (string-search/a (substring t n (+ n (string-length s)))
+                         (substring t (+ n (string-length s)))
+                         n))))
