@@ -1,3 +1,5 @@
+For best results, access via DrRacket.
+
 ## Overview
 
 This text editor is implemented using Racket's `2htdp/universe` and `2htdp/image` libraries. It features a minimal graphical interface and supports basic editing operations, font size adjustments, a menu, and a search mode.
